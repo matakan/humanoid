@@ -1,0 +1,161 @@
+name: A reusable worklow to submit a single job
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        required: true
+        type: string
+      depends_on:
+        required: false
+        type: string
+      image:
+        required: false
+        type: string
+      dockerfile:
+        required: false
+        type: string
+      build_context:
+        required: false
+        type: string
+      env2:
+        required: false
+        type: string
+        default: ""
+      env:
+        required: false
+        type: string
+        default: ""
+      backend:
+        required: false
+        type: string
+        default: ""
+      batch_pool:
+        required: false
+        type: string
+        default: ""
+      command:
+        required: false
+        type: string
+      input:
+        required: false
+        type: string
+        default: ""
+      output:
+        required: false
+        type: string
+        default: ""
+      entrypoint:
+        required: false
+        type: string
+        default: ""
+    outputs:
+      dynamic_output:
+        description: "Json output value. Can contain more than more variables"
+        value: ${{ jobs.job.outputs.dynamic_outputs }}
+
+    secrets:
+      token:
+        required: false
+
+jobs:
+  job:
+    name: ${{ inputs.name }}
+    runs-on: self-hosted
+    outputs:
+        dynamic_outputs: ${{ steps.job.outputs.json }}
+    steps:
+ #     - name: Configure AWS credentials
+ #       uses: aws-actions/configure-aws-credentials@v4
+ #       with:
+ #         aws-region: eu-west-2
+
+      - 
+        name: Download repository artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: repo_artifact_${{ github.sha }}
+
+      - 
+        name: job
+        id: job
+        shell: /usr/bin/bash --noprofile --norc -exo pipefail {0}
+        run: |
+          # Your deployment commands here
+
+          ls -al infrastructure/scripts
+          . pipeline.env
+
+          if [ '${{ inputs.env }}' != "" ]; then
+            json="json='{"
+            while read line; do
+                key=$(echo "${line}" | cut -d":" -f1 | cut -d'"' -f2)
+                value=$(echo "${line}" | awk -F':' '{for(i=2;i<=NF;i++) printf "%s%s", $i, (i<NF ? ":" : "\n")}') 
+                value=${value%?}
+
+                export ${key}="${value}"
+                json="${json}\"${key}\": \"${value}\", "
+                if [[ "$value" =~ ^"_" ]]; then
+                    subkey=$(echo "${value}" | cut -d'.' -f1)
+                    subval=$(echo "${value}" | cut -d'.' -f2)
+                    while read line2; do
+                        k1=$(echo "${line2}" | cut -d":" -f1 | cut -d'"' -f2)
+                        v1=$(echo "${line2}" | awk -F':' '{for(i=2;i<=NF;i++) printf "%s%s", $i, (i<NF ? ":" : "\n")}') 
+                        v1=${v1%?}
+                        if [ "$subval" == "${k1}" ]; then
+                           export ${key}="${v1}"
+                           json="${json}\"${key}\": \"${v1}\", "
+                        fi
+                    done  < <(echo "${!subkey}" | jq 'to_entries[] | "\(.key):\(.value)"' )
+                fi
+            done  < <(echo '${{ inputs.env }}' | jq 'to_entries[] | "\(.key):\(.value)"' )
+            json="${json%??}}'"
+          else
+            json="json=''"
+          fi
+          echo "$json"
+          echo "$json" >> $GITHUB_OUTPUT
+          env | grep value
+
+          if [ '${{ inputs.image }}' != "" ]; then
+            if [ '${{ inputs.backend }}' == "batch" ]; then
+                if [ '${{ inputs.batch_pool }}' != "" ]; then
+                  aws batch describe-job-queues --job-queues humanoid-lab-uce-gpu_mid --query "jobQueues[0].state" --output text
+                  JOB_TAG="${LAST_COMMIT_SHA:0:7}"
+                  IMAGE="${{ inputs.image }}"
+                  BATCH_POOL="${{ inputs.batch_pool }}"
+                  echo "Creating job definition on AWS Batch..."
+                  ./infrastructure/scripts/batch_infra.sh create job-definition $BATCH_POOL $ECR_NAME $IMAGE $FS_ID $JOBS_DIR $JOBS_DIR_MOUNT
+                  echo "Submitting job on AWS Batch..."
+                  aws batch submit-job \
+                      --job-name job-${JOB_TAG} \
+                      --job-queue ${AWS_BATCH_PRE}-${BATCH_POOL} \
+                      --job-definition ${AWS_BATCH_PRE}-${BATCH_POOL} \
+                      --container-overrides '{ 
+                        "environment": [
+                          {
+                              "name": "HYDRA_FULL_ERROR",
+                              "value": "1"
+                          },
+                          {
+                              "name": "NVIDIA_VISIBLE_DEVICES",
+                              "value": "all"
+                          }
+                        ]
+                      }'
+                else
+                  echo "!!! If the backend is batch, you should also define the \"batch_pool\" in the configuration, exiting..."
+                  exit 1
+                fi
+            fi
+            if [ '${{ inputs.entrypoint }}' != "" ]; then
+                echo '${{ inputs.entrypoint }}'
+                cnt=1
+                token=$(echo '${{ inputs.entrypoint }}' | tr -d '[]' | cut -d',' -f${cnt})
+                while [ "${token}" != "" ]; do
+                   echo $token
+                   ((cnt++))
+                   token=$(echo '${{ inputs.entrypoint }}' | tr -d '[]' | cut -d',' -f${cnt})
+                done
+            fi
+          fi
