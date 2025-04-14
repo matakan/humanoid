@@ -39,3 +39,6 @@ rclone mount "${bucket_name}":"${bucket_path}" "${mount_point}" \
           --log-level DEBUG \
           --allow-other \
           --allow-non-empty
+
+s3_region=$(aws s3api get-bucket-location --bucket hm-uce-data --output text)
+echo "${s3} (${s3_region}) ---> mounted to instance (${REGION})"
