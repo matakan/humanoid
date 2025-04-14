@@ -1,7 +1,7 @@
 #!/bin/bash
 
-s3=$(echo "$1" | cut -d"|" -f1)
-mount_point=$(echo "$1" | cut -d"|" -f2)
+s3="$1"
+mount_point="$2"
 bucket_name=$(echo "$s3" | cut -d"/" -f3)
 bucket_path=$(echo "$s3" | cut -d":" -f2 | sed '/^\/\// s///')
 
