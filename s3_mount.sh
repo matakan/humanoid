@@ -6,7 +6,6 @@ bucket_name=$(echo "$s3" | cut -d"/" -f3)
 bucket_path=$(echo "$s3" | cut -d":" -f2 | sed '/^\/\// s///')
 
 REGION=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/document | jq -r '.region')
-echo $REGION
 
 cat <<- EOF >> ~/.config/rclone/rclone.conf
 [$bucket_name]
